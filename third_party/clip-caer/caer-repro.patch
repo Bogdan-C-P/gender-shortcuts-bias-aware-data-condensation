@@ -1,0 +1,207 @@
+diff --git a/dataloader/video_dataloader.py b/dataloader/video_dataloader.py
+index d6b9cb2..b480274 100644
+--- a/dataloader/video_dataloader.py
++++ b/dataloader/video_dataloader.py
+@@ -203,7 +203,7 @@ class VideoDataset(data.Dataset):
+ 
+ 
+ def train_data_loader(list_file, num_segments, duration, image_size,dataset_name,bounding_box_face,bounding_box_body):
+-    if dataset_name == "RAER":
++    if dataset_name in ("RAER", "CAER"):  # [caer-repro] same augmentation for CAER
+          train_transforms = torchvision.transforms.Compose([
+             RandomRotation(4),
+             GroupResize(image_size),
+diff --git a/main.py b/main.py
+index 4e6994b..a343b15 100644
+--- a/main.py
++++ b/main.py
+@@ -53,6 +53,8 @@ path_group = parser.add_argument_group('Data & Path', 'Paths to datasets and pre
+ path_group.add_argument('--root-dir', type=str, default='/media/F/FERDataset/AER-DB', help='Root directory of the dataset.')
+ path_group.add_argument('--train-annotation', type=str, default='RAER/train_abs.txt', help='Path to training annotation file, relative to root-dir.')
+ path_group.add_argument('--test-annotation', type=str, default='RAER/test_abs.txt', help='Path to testing annotation file, relative to root-dir.')
++path_group.add_argument('--val-annotation', type=str, default=None,
++                        help='[caer-repro] optional real validation list; evaluated every epoch alongside the test list')
+ path_group.add_argument('--clip-path', type=str, default='/media/D/zlm/code/single_four/models/ViT-B-32.pt', help='Path to the pretrained CLIP model.')
+ path_group.add_argument('--bounding-box-face', type=str, default='/media/F/FERDataset/AER-DB/RAER/bounding_box/face_abs.json')
+ path_group.add_argument('--bounding-box-body', type=str, default="/media/F/FERDataset/AER-DB/RAER/bounding_box/body_abs.json")
+@@ -61,6 +63,8 @@ path_group.add_argument('--bounding-box-body', type=str, default="/media/F/FERDa
+ train_group = parser.add_argument_group('Training Control', 'Parameters to control the training process')
+ train_group.add_argument('--epochs', type=int, default=20, help='Total number of training epochs.')
+ train_group.add_argument('--batch-size', type=int, default=8, help='Batch size for training and validation.')
++train_group.add_argument('--accum-steps', type=int, default=1,
++                         help='[caer-repro] split each batch into this many micro-batches (gradient accumulation)')
+ train_group.add_argument('--print-freq', type=int, default=10, help='Frequency of printing training logs.')
+ 
+ # --- Optimizer & Learning Rate ---
+@@ -149,6 +153,8 @@ def run_training(args: argparse.Namespace) -> None:
+     # Load data
+     print("=> Building dataloaders...")
+     train_loader, val_loader = build_dataloaders(args)
++    holdout_loader = build_holdout_loader(args, args.val_annotation) if args.val_annotation else None  # [caer-repro]
++    epoch_rows = []  # [caer-repro]
+     print("=> Dataloaders built successfully.")
+ 
+     # Loss and optimizer
+@@ -165,6 +171,7 @@ def run_training(args: argparse.Namespace) -> None:
+     
+     # Trainer
+     trainer = Trainer(model, criterion, optimizer, scheduler, args.device, log_txt_path)
++    trainer.accum_steps = args.accum_steps  # [caer-repro]
+     
+     for epoch in range(start_epoch, args.epochs):
+         inf = f'******************** Epoch: {epoch} ********************'
+@@ -184,6 +191,20 @@ def run_training(args: argparse.Namespace) -> None:
+         # Train & Validate
+         train_war, train_uar, train_los, _ = trainer.train_epoch(train_loader, epoch)
+         val_war, val_uar, val_los, _ = trainer.validate(val_loader, str(epoch))
++        # [caer-repro] keep every epoch's test predictions, and score the real validation split
++        np.savez(os.path.join(args.output_path, f'test_probs_e{epoch:02d}.npz'),
++                 probs=trainer.last_probs, label=trainer.last_targets)
++        row = {'epoch': epoch, 'train_war': train_war, 'train_uar': train_uar,
++               'test_war': val_war, 'test_uar': val_uar}
++        if holdout_loader is not None:
++            ho_war, ho_uar, _, _ = trainer.validate(holdout_loader, f'{epoch} (validation split)')
++            np.savez(os.path.join(args.output_path, f'val_probs_e{epoch:02d}.npz'),
++                     probs=trainer.last_probs, label=trainer.last_targets)
++            row.update({'val_war': ho_war, 'val_uar': ho_uar})
++        epoch_rows.append(row)
++        import pandas as pd
++        pd.DataFrame(epoch_rows).to_csv(os.path.join(args.output_path, 'epochs.csv'), index=False)
++        print('[caer-repro] ' + ', '.join(f'{k} {v:.2f}' for k, v in row.items() if k != 'epoch'))
+         scheduler.step()
+ 
+         # Save checkpoint
+diff --git a/models/Text.py b/models/Text.py
+index 968a4bc..40904ec 100644
+--- a/models/Text.py
++++ b/models/Text.py
+@@ -39,4 +39,27 @@ class_descriptor_5 = [
+ 'Mouth opens in a yawn, eyelids droop, head tilts forward, eyes lock on learning material, or hand writing.',
+ 
+ 'Shifting eyes, restless or fidgety posture, relaxed but unfocused expression,frequently checking phone,or averted gaze from study materials.'
+-]
+\ No newline at end of file
++]
++
++# [caer-repro] CAER basic emotions — descriptors verbatim from the CLIP-CAER supplementary material
++# (arXiv 2507.00586). Order = CAER label order on disk (alphabetical): Anger, Disgust, Fear, Happy,
++# Neutral, Sad, Surprise.
++class_names_7_caer = ['Anger', 'Disgust', 'Fear', 'Happy', 'Neutral', 'Sad', 'Surprise']
++
++class_names_with_context_7_caer = ['an expression of ' + c + '.' for c in class_names_7_caer]
++
++class_descriptor_7_caer = [
++'Furrowed eyebrows, narrow eyes, tightened lips, and flared nostrils. Leaning forward, tense stance, fists clenched, or hand pointing.',
++
++'A wrinkled nose, lowered eyebrows, a tightened mouth, and narrow eyes. Slight step back, body angled away, hand raised or shielding face.',
++
++'Raised eyebrows, parted lips, a furrowed brow, and a retracted chin. Hands close to chest or tightly together, small, cautious steps backward.',
++
++'A smiling mouth, raised cheeks, wrinkled eyes, and arched eyebrows. Leaning in toward the other person, quick, cheerful movements.',
++
++'Relaxed facial muscles, a straight mouth, a smooth forehead, and unremarkable eyebrows. Relaxed posture, open stance, steady, calm eye contact.',
++
++'Tears, a downward-turned mouth, drooping upper eyelids, and a wrinkled forehead. Head down, avoiding eye contact, slow, withdrawn movements.',
++
++'Widened eyes, an open mouth, raised eyebrows, and a frozen expression. Sudden stillness, widened eyes on the other person, hands raised or paused mid-motion.'
++]
+diff --git a/trainer.py b/trainer.py
+index a4a8dc6..190e931 100644
+--- a/trainer.py
++++ b/trainer.py
+@@ -17,6 +17,7 @@ class Trainer:
+         self.device = device
+         self.print_freq = 10
+         self.log_txt_path = log_txt_path
++        self.accum_steps = 1  # [caer-repro] set from --accum-steps in main.py
+ 
+     def _run_one_epoch(self, loader, epoch_str, is_train=True):
+         """Runs one epoch of training or validation."""
+@@ -38,6 +39,7 @@ class Trainer:
+ 
+         all_preds = []
+         all_targets = []
++        all_probs = []  # [caer-repro] per-clip softmax, saved per epoch by main.py
+ 
+         context = torch.enable_grad() if is_train else torch.no_grad()
+         
+@@ -48,10 +50,24 @@ class Trainer:
+                 target = target.to(self.device)
+ 
+                 # Forward pass
+-                output = self.model(images_face, images_body)
+-                loss = self.criterion(output, target)
++                if is_train and self.accum_steps > 1:
++                    # [caer-repro] same batch, split into equal micro-batches with gradient accumulation
++                    # (mean CE, no BatchNorm -> same gradient as the full batch; fits a 12 GB GPU)
++                    self.optimizer.zero_grad()
++                    outs = []
++                    for f, b, t in zip(images_face.chunk(self.accum_steps), images_body.chunk(self.accum_steps),
++                                       target.chunk(self.accum_steps)):
++                        o = self.model(f, b)
++                        (self.criterion(o, t) * t.size(0) / target.size(0)).backward()
++                        outs.append(o.detach())
++                    output = torch.cat(outs)
++                    loss = self.criterion(output, target)
++                    self.optimizer.step()
++                else:
++                    output = self.model(images_face, images_body)
++                    loss = self.criterion(output, target)
+ 
+-                if is_train:
++                if is_train and self.accum_steps <= 1:
+                     self.optimizer.zero_grad()
+                     loss.backward()
+                     self.optimizer.step()
+@@ -65,6 +81,7 @@ class Trainer:
+                 war_meter.update(acc, target.size(0))
+ 
+                 all_preds.append(preds.cpu())
++                all_probs.append(output.detach().float().softmax(dim=1).cpu())
+                 all_targets.append(target.cpu())
+ 
+                 if i % self.print_freq == 0:
+@@ -73,6 +90,7 @@ class Trainer:
+         # Calculate epoch-level metrics
+         all_preds = torch.cat(all_preds)
+         all_targets = torch.cat(all_targets)
++        self.last_probs, self.last_targets = torch.cat(all_probs).numpy(), all_targets.numpy()  # [caer-repro]
+         
+         cm = confusion_matrix(all_targets.numpy(), all_preds.numpy())
+         war = war_meter.avg # Weighted Average Recall (WAR) is just the overall accuracy
+diff --git a/utils/builders.py b/utils/builders.py
+index d7c3ef2..6eb50ac 100644
+--- a/utils/builders.py
++++ b/utils/builders.py
+@@ -50,6 +50,10 @@ def get_class_info(args: argparse.Namespace) -> Tuple[list, list]:
+         class_names = ['Neutrality', 'Enjoyment', 'Confusion', 'Fatigue', 'Distraction.']
+         class_names_with_context = class_names_with_context_5
+         class_descriptor = class_descriptor_5
++    elif args.dataset == "CAER":  # [caer-repro]
++        class_names = class_names_7_caer
++        class_names_with_context = class_names_with_context_7_caer
++        class_descriptor = class_descriptor_7_caer
+     else:
+         raise NotImplementedError(f"Dataset '{args.dataset}' is not implemented yet.")
+ 
+@@ -94,4 +98,17 @@ def build_dataloaders(args: argparse.Namespace) -> Tuple[torch.utils.data.DataLo
+         num_workers=args.workers, pin_memory=True
+     )
+     
+-    return train_loader, val_loader
+\ No newline at end of file
++    return train_loader, val_loader
++
++
++def build_holdout_loader(args: argparse.Namespace, annotation: str) -> torch.utils.data.DataLoader:
++    """[caer-repro] Test-mode loader for an extra split (a real validation set). The original code
++    selects the checkpoint on --test-annotation; this lets the same run also report test at the epoch
++    chosen on validation."""
++    data = test_data_loader(
++        list_file=os.path.join(args.root_dir, annotation), num_segments=args.num_segments,
++        duration=args.duration, image_size=args.image_size,
++        bounding_box_face=args.bounding_box_face, bounding_box_body=args.bounding_box_body
++    )
++    return torch.utils.data.DataLoader(data, batch_size=args.batch_size, shuffle=False,
++                                       num_workers=args.workers, pin_memory=True)
+\ No newline at end of file

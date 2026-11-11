@@ -1,0 +1,23 @@
+# Main environment (Python 3.12). Versions in comments are the ones the paper's results were produced with.
+torch            # 2.13.0+cu126
+torchvision      # 0.28.0+cu126
+transformers     # 5.14.1
+open-clip-torch  # 3.3.0
+huggingface_hub  # 1.24.0
+safetensors      # 0.8.0
+numpy            # 2.5.1
+pandas           # 3.0.5
+scikit-learn     # 1.9.0
+scipy            # 1.18.0
+matplotlib
+pillow           # 12.3.0
+tqdm             # 4.69.1
+opencv-python-headless
+ultralytics      # YOLO11n face detector (scripts/caer_face_crops.py)
+ftfy             # 6.3.1, EmotionCLIP tokenizer (dcond/third_party/emotionclip)
+regex            # 2026.7.19
+
+# Separate environments (see README):
+#   .venv-vlm     vLLM + Qwen3-VL for the perceived-gender labels     -> requirements-vlm.txt
+#   .venv-asr     faster-whisper for the CAER transcripts              -> pip install faster-whisper
+#   .venv-glamor  TensorFlow 2.15 CPU + dlib for the GLAMOR-Net check  -> see README

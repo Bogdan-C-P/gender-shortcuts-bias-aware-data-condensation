@@ -1,0 +1,18 @@
+.venv*/
+__pycache__/
+*.pyc
+
+# datasets, derived frames / embeddings and model weights are never committed
+/data/
+/external/
+/CLIP-CAER/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npz
+
+# experiment outputs
+experiments/results/**
+!experiments/results/**/
+!experiments/results/caer_alltest_no_dedup.json

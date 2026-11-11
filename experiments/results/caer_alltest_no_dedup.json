@@ -1,0 +1,5 @@
+{
+ "note": "Empty near-twin lists: with --dedup-ids pointing here, every caer08-caer12 script selects hyperparameters / early-stops on the FULL validation split and its 'dedup' metrics are computed on the FULL test split (all 2,637 clips, twins included) - the standard CAER protocol. Outputs go to *_alltest folders.",
+ "validation": [],
+ "test": []
+}

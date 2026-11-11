@@ -1,0 +1,26 @@
+# VLM descriptions (scripts/caer_vlm_describe.py, Qwen3-VL) — added 2026-10-05.
+# Install in a SEPARATE venv: vLLM pins its own torch/transformers and would
+# otherwise change the versions every other script here runs on. Make sure no
+# other venv is active (`deactivate`) and always call .venv-vlm/bin/pip.
+#
+# Do NOT `pip install vllm` plainly: since vLLM 0.20 the default PyPI wheel is
+# built for CUDA 13 (torch +cu130), which needs NVIDIA driver >= 580. The 3060
+# box has driver 570 (CUDA 12.8) -> use the +cu129 release wheel with cu129
+# torch (CUDA 12.x minor-version compatibility):
+#
+#   deactivate 2>/dev/null; rm -rf .venv-vlm
+#   # the box's `python3` is Ubuntu's 3.8 — too old for vLLM; use the 3.12 the main .venv was built from
+#   PY=$(.venv/bin/python -c "import sys; print(sys._base_executable)"); $PY --version   # must be 3.12
+#   $PY -m venv .venv-vlm
+#   .venv-vlm/bin/pip install --upgrade pip
+#   .venv-vlm/bin/pip install "https://github.com/vllm-project/vllm/releases/download/v0.30.0/vllm-0.30.0+cu129-cp38-abi3-manylinux_2_28_x86_64.whl" \
+#       --extra-index-url https://download.pytorch.org/whl/cu129
+#   .venv-vlm/bin/pip install -r requirements-vlm.txt
+#   .venv-vlm/bin/python -c "import vllm, torch; print(vllm.__version__, torch.__version__, torch.version.cuda, torch.cuda.is_available())"
+#   # expect: 0.30.0+cu129 2.x.x+cu129 12.9 True
+#
+# If the driver is upgraded to >= 580 later, a plain `pip install vllm` works.
+# Fallback without vLLM: run the script from the main .venv with
+# --backend transformers --model Qwen/Qwen3-VL-4B-Instruct (slower, same output).
+pandas
+pillow
